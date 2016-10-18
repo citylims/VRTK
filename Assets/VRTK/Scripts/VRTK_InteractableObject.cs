@@ -203,6 +203,9 @@ namespace VRTK
         protected bool forceDisabled;
         protected VRTK_BaseHighlighter objectHighlighter;
         protected bool autoHighlighter = false;
+        protected bool inSnapDropZone = false;
+        protected VRTK_SnapDropZone storedSnapDropZone;
+        protected Vector3 previousLocalScale = Vector3.zero;
 
         public virtual void OnInteractableObjectTouched(InteractableObjectEventArgs e)
         {
@@ -340,6 +343,10 @@ namespace VRTK
         /// <param name="currentGrabbingObject">The game object that is currently grabbing this object.</param>
         public virtual void Grabbed(GameObject currentGrabbingObject)
         {
+            if (inSnapDropZone)
+            {
+                ToggleSnapDropZone(storedSnapDropZone, false, Vector3.zero);
+            }
             OnInteractableObjectGrabbed(SetInteractableObjectEvent(currentGrabbingObject));
             ForceReleaseGrab();
             RemoveTrackPoint();
@@ -503,7 +510,7 @@ namespace VRTK
         /// </summary>
         public void SaveCurrentState()
         {
-            if (grabbingObject == null)
+            if (grabbingObject == null && !inSnapDropZone)
             {
                 previousParent = transform.parent;
 
@@ -585,6 +592,44 @@ namespace VRTK
         public void RegisterTeleporters()
         {
             StartCoroutine(RegisterTeleportersAtEndOfFrame());
+        }
+
+        /// <summary>
+        /// The ToggleSnapDropZone method is used to set the state of whether the interactable object is in a Snap Drop Zone or not.
+        /// </summary>
+        /// <param name="snapDropZone">The Snap Drop Zone object that is being interacted with.</param>
+        /// <param name="state">The state of whether the interactable object is fixed in or removed from the Snap Drop Zone. True denotes the interactable object is fixed to the Snap Drop Zone and false denotes it has been removed from the Snap Drop Zone.</param>
+        /// <param name="newLocalScale">A Vector3 containing the new scale value of the interactable object when it has been toggled.</param>
+        public void ToggleSnapDropZone(VRTK_SnapDropZone snapDropZone, bool state, Vector3 newLocalScale)
+        {
+            if (state && inSnapDropZone)
+            {
+                return;
+            }
+
+            inSnapDropZone = state;
+            if (state)
+            {
+                if (!newLocalScale.Equals(Vector3.zero))
+                {
+                    previousLocalScale = transform.localScale;
+                    transform.localScale = Vector3.Scale(previousLocalScale, newLocalScale);
+                }
+                SetDropSnapType(snapDropZone);
+            }
+            else
+            {
+                ResetDropSnapType();
+                if (!previousLocalScale.Equals(Vector3.zero))
+                {
+                    transform.localScale = previousLocalScale;
+                }
+            }
+        }
+
+        public VRTK_SnapDropZone GetStoredSnapDropZone()
+        {
+            return storedSnapDropZone;
         }
 
         protected virtual void Awake()
@@ -901,6 +946,56 @@ namespace VRTK
                 usingObject.GetComponent<VRTK_InteractUse>().ForceStopUsing();
                 forcedDropped = true;
             }
+        }
+
+        private void SetDropSnapType(VRTK_SnapDropZone snapDropZone)
+        {
+            storedSnapDropZone = snapDropZone;
+
+            switch (storedSnapDropZone.snapType)
+            {
+                case VRTK_SnapDropZone.SnapTypes.Use_Kinematic:
+                    SaveCurrentState();
+                    ToggleKinematic(true);
+                    break;
+                case VRTK_SnapDropZone.SnapTypes.Use_Parenting:
+                    SaveCurrentState();
+                    ToggleKinematic(true);
+                    transform.SetParent(storedSnapDropZone.transform);
+                    break;
+                case VRTK_SnapDropZone.SnapTypes.Use_Joint:
+                    SetSnapDropZoneJoint(storedSnapDropZone, rb);
+                    break;
+            }
+            snapDropZone.OnObjectSnappedToDropZone(snapDropZone.SetSnapDropZoneEvent(gameObject));
+        }
+
+        private void ResetDropSnapType()
+        {
+            switch (storedSnapDropZone.snapType)
+            {
+                case VRTK_SnapDropZone.SnapTypes.Use_Kinematic:
+                case VRTK_SnapDropZone.SnapTypes.Use_Parenting:
+                    LoadPreviousState();
+                    break;
+                case VRTK_SnapDropZone.SnapTypes.Use_Joint:
+                    SetSnapDropZoneJoint(storedSnapDropZone, null);
+                    break;
+            }
+
+            storedSnapDropZone.OnObjectUnsnappedFromDropZone(storedSnapDropZone.SetSnapDropZoneEvent(gameObject));
+            storedSnapDropZone = null;
+        }
+
+        private void SetSnapDropZoneJoint(VRTK_SnapDropZone snapDropZone, Rigidbody snapTo)
+        {
+            var snapDropZoneJoint = snapDropZone.GetComponent<Joint>();
+            if (snapDropZoneJoint == null)
+            {
+                Debug.LogError("No Joint Component was found on the SnapDropZone GameObject yet the Snap Type is set to `Use Joint`. Please manually add a joint to the SnapDropZone GameObject.");
+                return;
+            }
+            snapDropZoneJoint.connectedBody = snapTo;
         }
     }
 }
